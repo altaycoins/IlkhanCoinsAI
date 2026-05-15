@@ -20,3 +20,7 @@ Before you begin, ensure you have Python 3.8+ installed on your system.
 ```bash
 git clone [https://github.com/altaycoins/altaycoinsAI.git](https://github.com/altaycoins/altaycoinsAI.git)
 cd altaycoinsAI
+```
+## 🚀 Working App
+You can find a working copy of the app in the following link
+https://ilkhancoinsai.streamlit.app
