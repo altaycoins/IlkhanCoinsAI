@@ -80,25 +80,20 @@ def load_effnet_model(version_path, feature):
 @st.cache_data
 def process_uploaded_image(image_source):
     """
-    Takes an uploaded image, fixes rotation, runs rembg, sets white background, 
-    splits it, and returns TWO preprocessed tensors.
+    Takes an uploaded image, runs rembg, splits it,
+    and returns TWO preprocessed tensors exactly matching the local pipeline.
     """
     try:
-        # 1. Open image and explicitly fix any smartphone EXIF rotation
-        raw_img = Image.open(image_source)
-        img = ImageOps.exif_transpose(raw_img).convert('RGB')
+        # 1. Open image and convert to RGB array (REVERTED EXIF TRANSPOSE)
+        img = Image.open(image_source).convert('RGB')
         
-        # 2. Run rembg (Returns RGBA with transparent background)
+        # 2. Run rembg 
         img_no_bg = rembg.remove(img)
 
-        # 3. EXPLICITLY create a solid WHITE background
-        background = Image.new("RGB", img_no_bg.size, (255, 255, 255))
-        
-        # 4. Paste the coin onto the white background using its alpha channel
-        background.paste(img_no_bg, mask=img_no_bg.split()[3]) 
-        img_rgb = background
+        # 3. Convert RGBA to RGB (This flattens transparent pixels to BLACK)
+        img_rgb = img_no_bg.convert("RGB")
 
-        # 5. Split into halves
+        # 4. Split into halves
         width, height = img_rgb.size
         midpoint = width // 2
         img_left = img_rgb.crop((0, 0, midpoint, height))
@@ -106,20 +101,20 @@ def process_uploaded_image(image_source):
 
         tensors = []
         for half_img in [img_left, img_right]:
-            # Resize if not matching target
+            # 5. Resize if not matching target
             if half_img.width != IMAGE_WIDTH or half_img.height != IMAGE_HEIGHT:
                 half_img = ImageOps.fit(half_img, (IMAGE_WIDTH, IMAGE_HEIGHT), Image.Resampling.LANCZOS)
             
             arr = np.asarray(half_img).astype(np.float32)
             
-            # Replicate logic from training preprocessing
+            # 6. Replicate logic from training preprocessing
             image_tensor = tf.convert_to_tensor(arr)
             image_tensor.set_shape([IMAGE_WIDTH, IMAGE_HEIGHT, 3])
             
-            # Apply the correct preprocessing
+            # 7. Apply the correct preprocessing
             image_processed = effnet_preprocess_input(image_tensor) 
             
-            # Add batch dimension for prediction
+            # 8. Add batch dimension for prediction
             tensors.append(tf.expand_dims(image_processed, axis=0))
         
         return tensors[0], tensors[1]
@@ -143,7 +138,7 @@ def run_prediction(model_pack, tensor_obverse, tensor_reverse):
         model = model_pack["model"]
         encoder = model_pack["encoder"]
         
-        # Predict on both halves (verbose=0 hides cloud terminal spam)
+        # Predict on both halves (verbose=0 hides cloud terminal spam, math remains identical)
         probs_obverse = model.predict(tensor_obverse, verbose=0)[0]
         probs_reverse = model.predict(tensor_reverse, verbose=0)[0]
         
