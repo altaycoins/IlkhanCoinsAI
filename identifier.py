@@ -1,8 +1,11 @@
+import os
+# --- CRITICAL FIX FOR TF 2.20.0 CLOUD DEPLOYMENT ---
+os.environ["TF_USE_LEGACY_KERAS"] = "1"
+
 import streamlit as st
 import numpy as np
 import pandas as pd
 from PIL import Image, ImageOps
-import os
 import joblib
 from pathlib import Path
 import tensorflow as tf
@@ -15,7 +18,7 @@ MODELS_BASE_DIR = "models"
 IMAGE_WIDTH, IMAGE_HEIGHT = 224, 224
 CONFIDENCE_THRESHOLD = 0.3 # 30% threshold
 
-# --- Model config just for EfficientNetV2 ---
+# --- Model config just for EfficientNetV2 (Ruler Only) ---
 MODEL_CONFIG = {
     "EfficientNetV2": {
         "Ruler": {
@@ -27,9 +30,7 @@ MODEL_CONFIG = {
 
 # --- Helper function to scan for models ---
 def get_model_versions():
-    """
-    Scans the 'models/' directory and returns a list of subfolder names.
-    """
+    """Scans the 'models/' directory and returns a list of subfolder names."""
     if not os.path.exists(MODELS_BASE_DIR) or not os.path.isdir(MODELS_BASE_DIR):
         return []
     
@@ -79,18 +80,25 @@ def load_effnet_model(version_path, feature):
 @st.cache_data
 def process_uploaded_image(image_source):
     """
-    Takes an uploaded image, runs rembg, splits it,
-    and returns TWO preprocessed tensors (obverse and reverse).
+    Takes an uploaded image, fixes rotation, runs rembg, sets white background, 
+    splits it, and returns TWO preprocessed tensors.
     """
     try:
-        # 1. Open image and convert to RGB array
-        img = Image.open(image_source).convert('RGB')
+        # 1. Open image and explicitly fix any smartphone EXIF rotation
+        raw_img = Image.open(image_source)
+        img = ImageOps.exif_transpose(raw_img).convert('RGB')
         
-        # --- Run rembg ---
+        # 2. Run rembg (Returns RGBA with transparent background)
         img_no_bg = rembg.remove(img)
-        img_rgb = img_no_bg.convert("RGB")
 
-        # 2. Split into halves
+        # 3. EXPLICITLY create a solid WHITE background
+        background = Image.new("RGB", img_no_bg.size, (255, 255, 255))
+        
+        # 4. Paste the coin onto the white background using its alpha channel
+        background.paste(img_no_bg, mask=img_no_bg.split()[3]) 
+        img_rgb = background
+
+        # 5. Split into halves
         width, height = img_rgb.size
         midpoint = width // 2
         img_left = img_rgb.crop((0, 0, midpoint, height))
@@ -98,23 +106,22 @@ def process_uploaded_image(image_source):
 
         tensors = []
         for half_img in [img_left, img_right]:
-            # 3. Resize if not matching target
+            # Resize if not matching target
             if half_img.width != IMAGE_WIDTH or half_img.height != IMAGE_HEIGHT:
                 half_img = ImageOps.fit(half_img, (IMAGE_WIDTH, IMAGE_HEIGHT), Image.Resampling.LANCZOS)
             
             arr = np.asarray(half_img).astype(np.float32)
             
-            # 4. Replicate logic from training preprocessing
+            # Replicate logic from training preprocessing
             image_tensor = tf.convert_to_tensor(arr)
             image_tensor.set_shape([IMAGE_WIDTH, IMAGE_HEIGHT, 3])
             
-            # 5. Apply the correct preprocessing
+            # Apply the correct preprocessing
             image_processed = effnet_preprocess_input(image_tensor) 
             
-            # 6. Add batch dimension for prediction
+            # Add batch dimension for prediction
             tensors.append(tf.expand_dims(image_processed, axis=0))
         
-        # --- RETURN BOTH TENSORS ---
         return tensors[0], tensors[1]
     
     except Exception as e:
@@ -136,7 +143,7 @@ def run_prediction(model_pack, tensor_obverse, tensor_reverse):
         model = model_pack["model"]
         encoder = model_pack["encoder"]
         
-        # --- Predict on both halves ---
+        # Predict on both halves (verbose=0 hides cloud terminal spam)
         probs_obverse = model.predict(tensor_obverse, verbose=0)[0]
         probs_reverse = model.predict(tensor_reverse, verbose=0)[0]
         
@@ -181,7 +188,6 @@ def main():
         st.stop()
 
     # --- AUTO-LOAD LOGIC ---
-    # If there is only one model folder, load it automatically without the sidebar button
     if len(model_versions) == 1:
         version_path = model_versions[0]
         if 'model_pack' not in st.session_state:
@@ -189,18 +195,17 @@ def main():
                 st.session_state.model_pack = load_effnet_model(version_path, feature)
                 st.toast("✅ Model loaded automatically!")
     else:
-        # If there are multiple models, show the sidebar to let the user choose
         st.sidebar.header("1. Load Model")
-        version_path = st.sidebar.selectbox("Model Version (from 'models' dir)", options=model_versions)
+        version_path = st.sidebar.selectbox("Model Version", options=model_versions)
         
         if st.sidebar.button("Load Ruler Model", type="primary"):
             with st.spinner(f"Loading {feature} model..."):
                 st.session_state.model_pack = load_effnet_model(version_path, feature)
                 st.toast("✅ Model loaded successfully!")
 
-    # --- Check if model is loaded before showing the rest of the app ---
+    # --- Check if model is loaded ---
     if 'model_pack' not in st.session_state or st.session_state.model_pack is None:
-        st.warning("Please load a model to begin.")
+        st.warning("Please wait for the model to load to begin.")
         st.stop()
     
     model_pack = st.session_state.model_pack
@@ -209,6 +214,7 @@ def main():
     # --- File Uploader (Main Area) ---
     st.divider()
     st.header("Upload Coin Images")
+    st.write("Ensure the **obverse** and **reverse** of the coin are side-by-side in a single image.")
     uploaded_files = st.file_uploader(
         "Drag and drop your JPEG/PNG files here.", 
         type=["jpg", "png", "jpeg"], 
@@ -222,7 +228,7 @@ def main():
         
         num_files = len(uploaded_files)
         num_cols = 3
-        num_rows = (num_files + num_cols - 1) // num_cols # Calculate rows needed
+        num_rows = (num_files + num_cols - 1) // num_cols 
         
         for i in range(num_rows):
             cols = st.columns(num_cols)
