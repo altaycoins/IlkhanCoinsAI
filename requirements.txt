@@ -3,7 +3,7 @@ numpy
 pandas
 Pillow
 joblib
-tensorflow==2.16.1
+tensorflow==2.20.0
 rembg
 scikit-learn
 onnxruntime
