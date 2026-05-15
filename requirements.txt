@@ -6,3 +6,4 @@ joblib
 tensorflow==2.16.1
 rembg
 scikit-learn
+onnxruntime
