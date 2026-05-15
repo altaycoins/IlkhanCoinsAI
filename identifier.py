@@ -1,6 +1,5 @@
 import os
-# --- CRITICAL FIX FOR TF 2.20.0 CLOUD DEPLOYMENT ---
-os.environ["TF_USE_LEGACY_KERAS"] = "1"
+# --- CRITICAL FIX FOR TF 2.20.0 CLOUD DEPLOYMENT ---os.environ["TF_USE_LEGACY_KERAS"] = "1"
 
 import streamlit as st
 import numpy as np
