@@ -1,0 +1,9 @@
+streamlit
+numpy
+pandas
+Pillow
+joblib
+tensorflow
+rembg
+onnxruntime
+scikit-learn
