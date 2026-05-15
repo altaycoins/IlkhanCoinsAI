@@ -15,7 +15,7 @@ import rembg
 # --- Configuration ---
 MODELS_BASE_DIR = "models"
 IMAGE_WIDTH, IMAGE_HEIGHT = 224, 224
-CONFIDENCE_THRESHOLD = 0.3 # 30% threshold
+CONFIDENCE_THRESHOLD = 0.2 # 20% threshold
 
 # --- Model config just for EfficientNetV2 (Ruler Only) ---
 MODEL_CONFIG = {
