@@ -1,268 +1,257 @@
+"""
+predictv7_1.py
+==============
+EfficientNetV2 Coin Predictor — Streamlit app.
+
+IMPORTANT: This app does NOT run rembg. Background removal is done
+separately by preprocess.py. Upload images from the 'processed/' folder.
+
+Requirements:
+    pip install streamlit tensorflow joblib numpy pillow scikit-learn==1.7.2
+"""
+
+import os
+import io
+import joblib
 import streamlit as st
 import numpy as np
-import pandas as pd
-from PIL import Image, ImageOps
-import os
-import joblib
 from pathlib import Path
+from PIL import Image, ImageOps
 import tensorflow as tf
 from tensorflow.keras.models import load_model
-from tensorflow.keras.applications.efficientnet_v2 import preprocess_input as effnet_preprocess_input
-import rembg # <--- IMPORTED REMBG
+from tensorflow.keras.applications.efficientnet_v2 import (
+    preprocess_input as effnet_preprocess_input,
+)
 
-# --- Configuration ---
+os.environ.setdefault("TF_DISABLE_MKL", "1")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+
+# ==============================================================================
+# Configuration
+# ==============================================================================
 MODELS_BASE_DIR = "models"
 IMAGE_WIDTH, IMAGE_HEIGHT = 224, 224
-CONFIDENCE_THRESHOLD = 0.3 # 30% threshold
+CONFIDENCE_THRESHOLD = 0.1
 
-# --- NEW: Model config just for EfficientNetV2 ---
 MODEL_CONFIG = {
     "EfficientNetV2": {
         "Ruler": {
-            "model_file": "efficientnetv2_donemi.keras", 
-            "encoder_file": "coin_donemi_encoder.joblib" 
+            "model_file": "efficientnetv2_donemi.keras",
+            "encoder_file": "coin_donemi_encoder.joblib",
         },
         "Mint": {
             "model_file": "efficientnetv2_darp_yeri.keras",
-            "encoder_file": "coin_darpyeri_encoder.joblib"
-        }
+            "encoder_file": "coin_darpyeri_encoder.joblib",
+        },
     }
 }
 
-# --- NEW: Helper function to scan for models ---
-def get_model_versions():
-    """
-    Scans the 'models/' directory and returns a list of subfolder names.
-    """
-    if not os.path.exists(MODELS_BASE_DIR) or not os.path.isdir(MODELS_BASE_DIR):
+# ==============================================================================
+# Helpers
+# ==============================================================================
+def get_model_versions() -> list:
+    p = Path(MODELS_BASE_DIR)
+    if not p.exists() or not p.is_dir():
         return []
-    
-    versions = [
-        item for item in os.listdir(MODELS_BASE_DIR)
-        if os.path.isdir(os.path.join(MODELS_BASE_DIR, item))
-    ]
-    return versions
+    return [d for d in os.listdir(p) if os.path.isdir(p / d)]
 
-# --- Model Loading ---
-@st.cache_resource
-def load_effnet_model(version_path, feature):
-    """ Loads the EfficientNetV2 model and its corresponding encoder. """
-    
-    config = MODEL_CONFIG["EfficientNetV2"].get(feature, {})
-    if not config:
-        st.error(f"Configuration error: No model defined for {feature}")
-        return None
-        
-    model_pack = {}
-    base_path = Path(MODELS_BASE_DIR) / version_path
-    
-    try:
-        # 1. Load Keras Model
-        model_file_path = base_path / config["model_file"]
-        if model_file_path.exists():
-            model_pack["model"] = load_model(model_file_path)
-        else:
-            st.error(f"Model file not found: {model_file_path}")
-            return None
-            
-        # 2. Load Encoder
-        encoder_file_path = base_path / config["encoder_file"]
-        if encoder_file_path.exists():
-            model_pack["encoder"] = joblib.load(encoder_file_path)
-        else:
-            st.error(f"Encoder file not found: {encoder_file_path}")
-            return None
-        
-        st.success(f"✅ Loaded {feature} model from {version_path}")
-        return model_pack
-        
-    except Exception as e:
-        st.error(f"Error loading model files: {e}")
-        return None
 
-# --- [NEW] On-the-fly JPEG Processing ---
-@st.cache_data
-def process_uploaded_image(image_source):
-    """
-    Takes an uploaded image, runs rembg, splits it,
-    and returns TWO preprocessed tensors (obverse and reverse).
-    """
-    try:
-        # 1. Open image and convert to RGB array
-        img = Image.open(image_source).convert('RGB')
-        
-        # --- NEW: Run rembg ---
-        img_no_bg = rembg.remove(img)
-        img_rgb = img_no_bg.convert("RGB")
-
-        # 2. Split into halves
-        width, height = img_rgb.size
-        midpoint = width // 2
-        img_left = img_rgb.crop((0, 0, midpoint, height))
-        img_right = img_rgb.crop((midpoint, 0, width, height))
-
-        tensors = []
-        for half_img in [img_left, img_right]:
-            # 3. Resize if not matching target
-            if half_img.width != IMAGE_WIDTH or half_img.height != IMAGE_HEIGHT:
-                half_img = ImageOps.fit(half_img, (IMAGE_WIDTH, IMAGE_HEIGHT), Image.Resampling.LANCZOS)
-            
-            arr = np.asarray(half_img).astype(np.float32)
-            
-            # 4. Replicate logic from load_npy_image in trainv7.py
-            image_tensor = tf.convert_to_tensor(arr)
-            image_tensor.set_shape([IMAGE_WIDTH, IMAGE_HEIGHT, 3])
-            
-            # 5. Apply the correct preprocessing
-            image_processed = effnet_preprocess_input(image_tensor) 
-            
-            # 6. Add batch dimension for prediction
-            tensors.append(tf.expand_dims(image_processed, axis=0))
-        
-        # --- RETURN BOTH TENSORS ---
-        return tensors[0], tensors[1]
-    
-        # --- BUGGY DEAD CODE REMOVED ---
-    
-    except Exception as e:
-        st.error(f"Error processing {image_source.name}: {e}")
-        # --- MODIFIED: Return tuple to avoid unpack error ---
-        return None, None
-
-# --- Prediction Function ---
-def format_prediction_text(text):
-    """Formats a label like 'ghazan-mahmud' to 'Ghazan Mahmud'."""
+def format_prediction_text(text: str) -> str:
     if not isinstance(text, str):
         text = str(text)
-    # --- FIXED: Added return statement ---
-    return text.replace('-', ' ').title()
+    return text.replace("-", " ").title()
 
-def run_prediction(model_pack, tensor_obverse, tensor_reverse):
-    """ 
-    Runs prediction on BOTH halves and averages the probabilities.
+
+# ==============================================================================
+# Model loading (cached — loaded once per session)
+# ==============================================================================
+@st.cache_resource
+def load_effnet_model(version_path: str, feature: str):
+    config = MODEL_CONFIG["EfficientNetV2"].get(feature)
+    if not config:
+        st.error(f"No model config for feature '{feature}'.")
+        return None
+
+    base         = Path(MODELS_BASE_DIR) / version_path
+    model_path   = base / config["model_file"]
+    encoder_path = base / config["encoder_file"]
+
+    if not model_path.exists():
+        st.error(f"Model file not found: {model_path}")
+        return None
+    if not encoder_path.exists():
+        st.error(f"Encoder file not found: {encoder_path}")
+        return None
+
+    try:
+        model   = load_model(model_path)
+        encoder = joblib.load(encoder_path)
+        st.success(f"Loaded '{feature}' model from '{version_path}'")
+        return {"model": model, "encoder": encoder}
+    except Exception as e:
+        st.error(f"Error loading model: {e}")
+        return None
+
+
+# ==============================================================================
+# Image processing (cached per file — bytes are hashable, file objects are not)
+# No rembg — images must already have background removed by preprocess.py
+# ==============================================================================
+@st.cache_data
+def process_uploaded_image(image_bytes: bytes, filename: str):
+    """
+    Splits image into left/right halves, resizes, preprocesses for EfficientNetV2.
+    Returns (tensor_obverse, tensor_reverse) or (None, None) on error.
     """
     try:
-        model = model_pack["model"]
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+
+        width, height = img.size
+        mid       = width // 2
+        img_left  = img.crop((0, 0, mid, height))
+        img_right = img.crop((mid, 0, width, height))
+
+        tensors = []
+        for half in [img_left, img_right]:
+            if half.width != IMAGE_WIDTH or half.height != IMAGE_HEIGHT:
+                half = ImageOps.fit(
+                    half, (IMAGE_WIDTH, IMAGE_HEIGHT), Image.Resampling.LANCZOS
+                )
+            arr = np.asarray(half).astype(np.float32)
+            t   = tf.convert_to_tensor(arr)
+            t.set_shape([IMAGE_WIDTH, IMAGE_HEIGHT, 3])
+            t   = effnet_preprocess_input(t)
+            tensors.append(tf.expand_dims(t, axis=0))
+
+        return tensors[0], tensors[1]
+
+    except Exception as e:
+        st.error(f"Error processing '{filename}': {e}")
+        return None, None
+
+
+# ==============================================================================
+# Prediction
+# ==============================================================================
+def run_prediction(model_pack: dict, tensor_obverse, tensor_reverse):
+    try:
+        model   = model_pack["model"]
         encoder = model_pack["encoder"]
-        
-        # --- NEW: Predict on both halves ---
-        probs_obverse = model.predict(tensor_obverse)[0]
-        probs_reverse = model.predict(tensor_reverse)[0]
-        
-        # Average the probabilities
+
+        probs_obverse = model.predict(tensor_obverse, verbose=0)[0]
+        probs_reverse = model.predict(tensor_reverse, verbose=0)[0]
         probabilities = (probs_obverse + probs_reverse) / 2.0
-        
-        # Get top 3
-        top_3_indices = np.argsort(probabilities)[::-1][:3]
-        top_3_scores = probabilities[top_3_indices]
-        top_3_names = encoder.classes_[top_3_indices] 
-        
-        # Format for display
-        formatted_names = [format_prediction_text(name) for name in top_3_names]
-        prediction = formatted_names[0]
-        probability = top_3_scores[0]
-        
+
+        top3_idx    = np.argsort(probabilities)[::-1][:3]
+        top3_scores = probabilities[top3_idx]
+        top3_names  = [format_prediction_text(encoder.classes_[i]) for i in top3_idx]
+
+        prediction  = top3_names[0]
+        probability = top3_scores[0]
+
         if probability < CONFIDENCE_THRESHOLD:
-            st.metric(label=f"Predicted", value="I don't know")
+            st.metric(label="Predicted", value="I don't know")
             st.info(f"Top guess: {prediction} ({probability*100:.1f}% conf.)")
         else:
-            st.metric(label=f"Predicted", value=prediction, delta=f"{probability*100:.1f}% Confidence")
+            st.metric(
+                label="Predicted",
+                value=prediction,
+                delta=f"{probability*100:.1f}% Confidence",
+            )
             st.write("&nbsp;")
-            
+
         st.write("**Top 3 Guesses:**")
-        for i, (name, score) in enumerate(zip(formatted_names, top_3_scores)):
+        for i, (name, score) in enumerate(zip(top3_names, top3_scores)):
             st.write(f"{i+1}. {name} ({score*100:.1f}%)")
 
     except Exception as e:
         st.error(f"Prediction failed: {e}")
 
-# --- Main Application UI ---
+
+# ==============================================================================
+# Main UI
+# ==============================================================================
 def main():
-    st.set_page_config(page_title="EfficientNetV2 Predictor", layout="wide")
+    st.set_page_config(page_title="EfficientNetV2 Coin Predictor", layout="wide")
     st.title("🪙 EfficientNetV2 Coin Predictor")
-    
-    # --- 1. Model Selection Sidebar ---
+    st.caption(
+        "Upload images pre-processed with **preprocess.py** (background already removed)."
+    )
+
+    # ── Sidebar: model selection ──────────────────────────────────────────────
     st.sidebar.header("1. Load Model")
-    
-    # --- MODIFIED: Dynamic dropdown for model version ---
+
     model_versions = get_model_versions()
     if not model_versions:
-        st.sidebar.error("No model versions found in 'models' directory.")
-        st.warning("Please create a subfolder in the 'models' directory to continue.")
+        st.sidebar.error("No model versions found in 'models/' directory.")
+        st.warning("Create a subfolder inside 'models/' to continue.")
         st.stop()
-        
-    version_path = st.sidebar.selectbox(
-        "Model Version (from 'models' dir)", 
-        options=model_versions
+
+    version_path = st.sidebar.selectbox("Model version", options=model_versions)
+    feature      = st.sidebar.selectbox(
+        "Feature to predict", options=["Ruler", "Mint"], key="feat"
     )
-    # --- END MODIFICATION ---
-    
-    feature = st.sidebar.selectbox("Feature to Predict", options=["Ruler", "Mint"], key="feat")
-    
+
     if st.sidebar.button("Load Model", type="primary"):
-        with st.spinner(f"Loading {feature} model..."):
+        with st.spinner(f"Loading '{feature}' model..."):
             st.session_state.model_pack = load_effnet_model(version_path, feature)
-    
-    # --- 2. File Uploader (Moved to Sidebar) ---
+
+    # ── Sidebar: file uploader ────────────────────────────────────────────────
     st.sidebar.divider()
-    st.sidebar.header("2. Upload Coin Images")
+    st.sidebar.header("2. Upload Pre-Processed Coin Images")
+    st.sidebar.caption("Use images output by preprocess.py (backgrounds already removed).")
+
     uploaded_files = st.sidebar.file_uploader(
-        "Drag and drop your JPEG/PNG files here.", 
-        type=["jpg", "png", "jpeg"], 
-        accept_multiple_files=True
+        "Drag and drop JPEG/PNG files here.",
+        type=["jpg", "png", "jpeg"],
+        accept_multiple_files=True,
     )
-    
-    # --- Main Area ---
+
+    # ── Main area ─────────────────────────────────────────────────────────────
     st.divider()
 
-    # --- 3. Check for loaded model ---
-    if 'model_pack' not in st.session_state or st.session_state.model_pack is None:
-        st.warning("Please load a model using the sidebar to begin.")
+    if "model_pack" not in st.session_state or st.session_state.model_pack is None:
+        st.warning("Load a model using the sidebar to begin.")
         st.stop()
-    
+
     model_pack = st.session_state.model_pack
-    st.success(f"**Model Loaded:** Predicting `{feature}` using `{version_path}`")
+    st.success(f"**Model loaded:** predicting `{feature}` using `{version_path}`")
 
+    if not uploaded_files:
+        st.info("Upload pre-processed coin images in the sidebar to see predictions.")
+        st.stop()
 
-    # --- 4. Display Results (MODIFIED for 3-Column Grid) ---
-    if uploaded_files:
-        st.header("3. Prediction Results")
-        
-        num_files = len(uploaded_files)
-        num_cols = 3
-        num_rows = (num_files + num_cols - 1) // num_cols # Calculate rows needed
-        
-        for i in range(num_rows):
-            cols = st.columns(num_cols)
-            for j in range(num_cols):
-                file_idx = i * num_cols + j
-                
-                if file_idx < num_files:
-                    file = uploaded_files[file_idx]
-                    
-                    # Create a card for each result
-                    with cols[j]:
-                        with st.container(border=True):
-                            st.subheader(f"Results for: {file.name}")
-                            
-                            # Display image (using preferred width 'stretch')
-                            st.image(file, width='stretch') 
-                            
-                            # Process the image on-the-fly
-                            with st.spinner(f"Processing {file.name}..."):
-                                tensor_obverse, tensor_reverse = process_uploaded_image(file)
-                            
-                            # Run prediction
-                            if tensor_obverse is not None:
-                                run_prediction(model_pack, tensor_obverse, tensor_reverse)
-                            else:
-                                st.error("Could not process this image.")
-                                
-    elif 'model_pack' in st.session_state:
-        st.info("Upload coin images in the sidebar to see predictions.")
+    # ── Results grid (3 columns) ──────────────────────────────────────────────
+    st.header("3. Prediction Results")
+
+    num_cols = 3
+    num_rows = (len(uploaded_files) + num_cols - 1) // num_cols
+
+    for row in range(num_rows):
+        cols = st.columns(num_cols)
+        for col_idx in range(num_cols):
+            file_idx = row * num_cols + col_idx
+            if file_idx >= len(uploaded_files):
+                break
+
+            file = uploaded_files[file_idx]
+            with cols[col_idx]:
+                with st.container(border=True):
+                    st.subheader(file.name)
+
+                    image_bytes = file.read()
+                    st.image(image_bytes, use_container_width=True)
+
+                    with st.spinner("Processing..."):
+                        tensor_obverse, tensor_reverse = process_uploaded_image(
+                            image_bytes, file.name
+                        )
+
+                    if tensor_obverse is not None:
+                        run_prediction(model_pack, tensor_obverse, tensor_reverse)
+                    else:
+                        st.error("Could not process this image.")
 
 
 if __name__ == "__main__":
-    if "TF_DISABLE_MKL" not in os.environ:
-        os.environ["TF_DISABLE_MKL"] = "1"
     main()
