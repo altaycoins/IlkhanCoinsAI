@@ -8,7 +8,7 @@ from pathlib import Path
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 from tensorflow.keras.applications.efficientnet_v2 import preprocess_input as effnet_preprocess_input
-import rembg # <--- IMPORTED REMBG
+import rembg 
 
 # --- Configuration ---
 MODELS_BASE_DIR = "models"
@@ -80,10 +80,7 @@ def load_effnet_model(version_path, feature):
         st.error(f"Error loading model files: {e}")
         return None
 
-# --- [NEW] On-the-fly JPEG Processing ---
-# --- [NEW] On-the-fly JPEG Processing ---
-# REMOVED @st.cache_data to prevent TensorFlow Tensor pickling corruption in the cloud
-# --- [NEW] On-the-fly JPEG Processing ---
+
 def process_uploaded_image(image_source):
     try:
         image_source.seek(0)
@@ -243,10 +240,18 @@ def main():
                             # Display image (using preferred width 'stretch')
                             st.image(file, use_container_width=True) 
                             
-                            # Process the image on-the-fly
+                           # Process the image on-the-fly
                             with st.spinner(f"Processing {file.name}..."):
-                                tensor_obverse, tensor_reverse = process_uploaded_image(file)
+                                tensor_obverse, tensor_reverse, img_obv, img_rev = process_uploaded_image(file)
                             
+                            # --- NEW: Debugging View ---
+                            if img_obv and img_rev:
+                                st.write("🔍 **What the model sees:**")
+                                debug_cols = st.columns(2)
+                                debug_cols[0].image(img_obv, caption="Obverse (Left)")
+                                debug_cols[1].image(img_rev, caption="Reverse (Right)")
+                            # ---------------------------
+
                             # Run prediction
                             if tensor_obverse is not None:
                                 run_prediction(model_pack, tensor_obverse, tensor_reverse)
