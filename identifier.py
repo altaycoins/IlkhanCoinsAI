@@ -9,7 +9,8 @@ from pathlib import Path
 # --- THE FIX: Disable Intel Optimizations BEFORE importing TensorFlow ---
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 os.environ["TF_DISABLE_MKL"] = "1"
-os.path.getsize()
+for f in Path("models").rglob("*"):
+    st.write(f"{f} → {os.path.getsize(f):,} bytes")
 # ----------------------------------------------------------------------
 
 import tensorflow as tf
