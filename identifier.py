@@ -246,7 +246,7 @@ def main():
                             st.subheader(f"Results for: {file.name}")
                             
                             # Display image (using preferred width 'stretch')
-                            st.image(file, width='stretch') 
+                            st.image(file, use_container_width=True) 
                             
                             # Process the image on-the-fly
                             with st.spinner(f"Processing {file.name}..."):
