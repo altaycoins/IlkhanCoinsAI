@@ -254,6 +254,7 @@ def main():
 
                             # Run prediction
                             if tensor_obverse is not None:
+                                st.info(f"Obverse Tensor Checksum: {np.sum(tensor_obverse.numpy()):.4f}")
                                 run_prediction(model_pack, tensor_obverse, tensor_reverse)
                             else:
                                 st.error("Could not process this image.")
