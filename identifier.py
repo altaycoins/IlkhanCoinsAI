@@ -9,8 +9,6 @@ from pathlib import Path
 # --- THE FIX: Disable Intel Optimizations BEFORE importing TensorFlow ---
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 os.environ["TF_DISABLE_MKL"] = "1"
-for f in Path("models").rglob("*"):
-    st.write(f"{f} → {os.path.getsize(f):,} bytes")
 # ----------------------------------------------------------------------
 
 import tensorflow as tf
@@ -186,6 +184,8 @@ def run_prediction(model_pack, tensor_obverse, tensor_reverse):
 def main():
     st.set_page_config(page_title="EfficientNetV2 Predictor", layout="wide")
     st.title("🪙 EfficientNetV2 Coin Predictor")
+    for f in Path("models").rglob("*"):
+    st.write(f"{f} → {os.path.getsize(f):,} bytes")
     
     # --- 1. Model Selection Sidebar ---
     st.sidebar.header("1. Load Model")
