@@ -83,59 +83,46 @@ def load_effnet_model(version_path, feature):
 # --- [NEW] On-the-fly JPEG Processing ---
 # --- [NEW] On-the-fly JPEG Processing ---
 # REMOVED @st.cache_data to prevent TensorFlow Tensor pickling corruption in the cloud
+# --- [NEW] On-the-fly JPEG Processing ---
 def process_uploaded_image(image_source):
-    """
-    Takes an uploaded image, runs rembg, splits it,
-    and returns TWO preprocessed tensors (obverse and reverse).
-    """
     try:
-        # 1. Reset file pointer (st.image reads the file first, we need to rewind it)
         image_source.seek(0)
-        
-        # 2. Open image and FORCE Exif orientation (fixes rotation mismatch in cloud)
         img = Image.open(image_source)
         img = ImageOps.exif_transpose(img).convert('RGB')
         
-        # 3. Run rembg (Outputs RGBA)
         img_no_bg = rembg.remove(img)
         
-        # 4. EXPLICIT Background Compositing 
-        # (Prevents Linux/Windows discrepancies when converting transparent pixels to RGB)
-        # Assuming your model was trained on black backgrounds. If white, change to (255, 255, 255)
+        # Explicit black background
         bg = Image.new("RGB", img_no_bg.size, (0, 0, 0))
-        bg.paste(img_no_bg, mask=img_no_bg.split()[3]) # Use the alpha channel as a mask
+        bg.paste(img_no_bg, mask=img_no_bg.split()[3]) 
         img_rgb = bg
 
-        # 5. Split into halves
         width, height = img_rgb.size
         midpoint = width // 2
         img_left = img_rgb.crop((0, 0, midpoint, height))
         img_right = img_rgb.crop((midpoint, 0, width, height))
 
         tensors = []
+        display_images = [] # NEW: Store images for debugging
+        
         for half_img in [img_left, img_right]:
-            # 6. Resize if not matching target
             if half_img.width != IMAGE_WIDTH or half_img.height != IMAGE_HEIGHT:
                 half_img = ImageOps.fit(half_img, (IMAGE_WIDTH, IMAGE_HEIGHT), Image.Resampling.LANCZOS)
             
-            arr = np.asarray(half_img).astype(np.float32)
+            display_images.append(half_img) # NEW: Save for UI
             
-            # 7. Convert to tensor
+            arr = np.asarray(half_img).astype(np.float32)
             image_tensor = tf.convert_to_tensor(arr)
             image_tensor.set_shape([IMAGE_WIDTH, IMAGE_HEIGHT, 3])
-            
-            # 8. Apply the correct preprocessing
             image_processed = effnet_preprocess_input(image_tensor) 
-            
-            # 9. Add batch dimension for prediction
             tensors.append(tf.expand_dims(image_processed, axis=0))
         
-        # --- RETURN BOTH TENSORS ---
-        return tensors[0], tensors[1]
+        # RETURN images alongside tensors
+        return tensors[0], tensors[1], display_images[0], display_images[1]
     
     except Exception as e:
         st.error(f"Error processing {image_source.name}: {e}")
-        return None, None
+        return None, None, None, None
 
 # --- Prediction Function ---
 def format_prediction_text(text):
