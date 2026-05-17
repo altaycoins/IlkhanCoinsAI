@@ -1,15 +1,3 @@
-"""
-predictv7_1.py
-==============
-EfficientNetV2 Coin Predictor — Streamlit app.
-
-IMPORTANT: This app does NOT run rembg. Background removal is done
-separately by preprocess.py. Upload images from the 'processed/' folder.
-
-Requirements:
-    pip install streamlit tensorflow joblib numpy pillow scikit-learn==1.7.2
-"""
-
 import os
 import io
 import joblib
@@ -172,8 +160,8 @@ def run_prediction(model_pack: dict, tensor_obverse, tensor_reverse):
 # Main UI
 # ==============================================================================
 def main():
-    st.set_page_config(page_title="EfficientNetV2 Coin Predictor", layout="wide")
-    st.title("🪙 EfficientNetV2 Coin Predictor")
+    st.set_page_config(page_title="altaycoins Ilkhanid Coin Identifier", layout="wide")
+    st.title("🪙 altaycoins Ilkhanid Coin Identifier")
     st.caption(
         "Upload images pre-processed with **preprocess.py** (background already removed)."
     )
